@@ -25,6 +25,10 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> invalid(MethodArgumentNotValidException ex) {
-        return ResponseEntity.badRequest().body(Map.of("error", "messages is required"));
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(error -> error.getField() + " " + error.getDefaultMessage())
+                .orElse("invalid request");
+        return ResponseEntity.badRequest().body(Map.of("error", message));
     }
 }

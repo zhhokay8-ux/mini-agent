@@ -1,3 +1,10 @@
 package com.miniagent.chat;
 
-public record ChatResponse(String model, String content) {}
+import java.util.List;
+
+public record ChatResponse(String model, String content, List<ToolTrace> toolTraces) {
+
+    public ChatResponse(String model, String content) {
+        this(model, content, List.of());
+    }
+}
