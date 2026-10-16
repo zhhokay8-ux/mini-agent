@@ -81,6 +81,10 @@ public class DeepSeekChatClient implements ChatClient {
         return new ChatResponse(model, "已达到最大工具调用轮次（" + maxRounds + "），停止继续调用。", List.copyOf(traces));
     }
 
+    /**
+     * Agent 流式：工具循环仍一次性跑完（工具不便边调边流），把最终回答当作一个 token 推出。
+     * 真正的逐 token 见 {@link #streamGenerate}。
+     */
     @Override
     public Flux<String> stream(List<ChatMessage> messages) {
         ChatResponse response = chat(messages);
@@ -100,6 +104,48 @@ public class DeepSeekChatClient implements ChatClient {
         JsonNode message = root.path("choices").path(0).path("message");
         String model = root.path("model").asText(properties.model());
         return new ChatResponse(model, message.path("content").asText(""), List.of());
+    }
+
+    /**
+     * DeepSeek {@code stream=true} 且不带 tools，解析 SSE 里 delta.content 作为 token。
+     */
+    @Override
+    public Flux<String> streamGenerate(List<ChatMessage> messages) {
+        requireApiKey();
+        return webClient
+                .post()
+                .uri("/chat/completions")
+                .header(HttpHeaders.AUTHORIZATION, bearer())
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .bodyValue(payload(messages, true, false))
+                .retrieve()
+                .bodyToFlux(String.class)
+                .flatMap(this::extractDelta)
+                .filter(token -> !token.isEmpty())
+                .onErrorMap(
+                        WebClientResponseException.class,
+                        ex -> new DeepSeekException(
+                                "DeepSeek stream failed: HTTP " + ex.getStatusCode().value() + " "
+                                        + ex.getResponseBodyAsString(),
+                                ex));
+    }
+
+    /**
+     * 解析 DeepSeek 流式 JSON：只取出 {@code choices[0].delta.content}，忽略 [DONE] 和思考字段。
+     */
+    private Flux<String> extractDelta(String event) {
+        if (event == null || event.isBlank() || "[DONE]".equals(event.trim())) {
+            return Flux.empty();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(event);
+            String content = root.path("choices").path(0).path("delta").path("content").asText("");
+            return content.isEmpty() ? Flux.empty() : Flux.just(content);
+        } catch (Exception ex) {
+            log.debug("Skip non-JSON SSE chunk: {}", event);
+            return Flux.empty();
+        }
     }
 
     /**
