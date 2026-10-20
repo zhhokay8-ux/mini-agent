@@ -2,6 +2,7 @@ package com.miniagent.chat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.miniagent.shop.PendingConfirmation;
 import com.miniagent.tool.ToolRegistry;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,10 +38,15 @@ public class DeepSeekChatClient implements ChatClient {
                 .build();
     }
 
+    /**
+     * 第 5 阶段 Agent 循环：检索、查单、退货都是工具。
+     * 遇到 {@code need_confirm=true} 立即停，把待确认单交给前端，避免模型在用户点头前声称「已提交」。
+     */
     @Override
     public ChatResponse chat(List<ChatMessage> messages) {
         requireApiKey();
         List<ChatMessage> conversation = new ArrayList<>(messages);
+        ensureAgentSystemPrompt(conversation);
         List<ToolTrace> traces = new ArrayList<>();
         String model = properties.model();
         int maxRounds = properties.maxIterations();
@@ -55,7 +61,6 @@ public class DeepSeekChatClient implements ChatClient {
                 return new ChatResponse(model, message.path("content").asText(""), List.copyOf(traces));
             }
 
-            //将用户填入的内容和tool记录到chatMessage中
             conversation.add(ChatMessage.assistantToolCalls(nullIfBlank(message.path("content").asText(null)), toolCalls));
             for (AssistantToolCall call : toolCalls) {
                 long started = System.nanoTime();
@@ -72,13 +77,57 @@ public class DeepSeekChatClient implements ChatClient {
                         arguments,
                         durationMs,
                         success);
-                //将当前call的id和结果加入当当前message中
                 conversation.add(ChatMessage.tool(call.id(), result));
+                JsonNode confirmation = readNeedConfirm(result);
+                if (confirmation != null) {
+                    return new ChatResponse(
+                            model,
+                            "请确认以下操作后再继续。确认前不会创建退货单。\n" + confirmation.path("preview").asText(""),
+                            List.copyOf(traces),
+                            null,
+                            new PendingConfirmation(
+                                    confirmation.path("confirmationId").asText(),
+                                    name,
+                                    arguments,
+                                    confirmation.path("preview").asText(),
+                                    confirmation.path("orderId").asText(null)));
+                }
             }
         }
 
         log.warn("tool loop stopped at maxIterations={}", maxRounds);
         return new ChatResponse(model, "已达到最大工具调用轮次（" + maxRounds + "），停止继续调用。", List.copyOf(traces));
+    }
+
+    /**
+     * 保证对话最前面有一条 Agent 行为约束：制度要检索、写操作要确认。
+     * 调用方已有 system 时仍插入，避免用户自定义人设把规则冲掉。
+     */
+    private void ensureAgentSystemPrompt(List<ChatMessage> conversation) {
+        conversation.add(
+                0,
+                new ChatMessage(
+                        "system",
+                        "你是商城客服 Agent。规则："
+                                + "1) 制度、退货政策、如何申请必须先 search_knowledge，未检索到资料时不要编造。"
+                                + "2) 问某订单能不能退：先 get_order，再 search_knowledge 对照政策。"
+                                + "3) 用户要提交退货时才 create_refund；该工具只会生成待确认单，在用户确认前不要说已经退货成功。"
+                                + "4) 天气用 get_weather。最多规划若干步，信息不够就追问订单号。"));
+    }
+
+    /**
+     * 解析工具 JSON。仅当 {@code need_confirm=true} 且带 confirmationId 时返回节点，供循环中断。
+     */
+    private JsonNode readNeedConfirm(String result) {
+        try {
+            JsonNode node = objectMapper.readTree(result);
+            if (node.path("need_confirm").asBoolean(false) && node.path("confirmationId").asText("").length() > 0) {
+                return node;
+            }
+        } catch (Exception ignored) {
+            // 非 JSON 的工具结果按普通 Observation 继续循环
+        }
+        return null;
     }
 
     /**

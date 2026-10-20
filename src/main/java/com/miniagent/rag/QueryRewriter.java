@@ -20,6 +20,9 @@ public class QueryRewriter {
         ALIASES.put("出差报销", "差旅费报销标准与流程");
         ALIASES.put("请假咋整", "事假年假申请流程");
         ALIASES.put("怎么请假", "事假年假申请流程");
+        ALIASES.put("退货政策", "耳机退货政策");
+        ALIASES.put("能退吗", "7 天无理由退货政策");
+        ALIASES.put("耳机退", "无线耳机 7 天无理由退货");
     }
 
     /**

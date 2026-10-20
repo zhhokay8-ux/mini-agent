@@ -46,6 +46,12 @@ public class ChatController {
     public Flux<ServerSentEvent<String>> stream(@Valid @RequestBody ChatRequest request) {
         ChatResponse response = chatClient.chat(modelInput(request));
         persistAssistant(request.sessionId(), response.content());
+        if (response.confirmation() != null) {
+            return Flux.just(
+                    sseEvents.confirm(response.confirmation()),
+                    sseEvents.token(response.content()),
+                    sseEvents.done());
+        }
         return Flux.just(sseEvents.token(response.content()), sseEvents.done());
     }
 

@@ -3,6 +3,7 @@ package com.miniagent.web;
 import com.miniagent.chat.DeepSeekException;
 import com.miniagent.chat.MissingApiKeyException;
 import com.miniagent.session.SessionNotFoundException;
+import com.miniagent.shop.ConfirmationNotFoundException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +13,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    @ExceptionHandler(ConfirmationNotFoundException.class)
+    public ResponseEntity<Map<String, String>> missingConfirmation(ConfirmationNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
 
     @ExceptionHandler(SessionNotFoundException.class)
     public ResponseEntity<Map<String, String>> missingSession(SessionNotFoundException ex) {

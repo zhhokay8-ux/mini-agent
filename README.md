@@ -1,6 +1,6 @@
-# mini-agent（第 4 阶段：会话记忆 + SSE）
+# mini-agent（第 5 阶段：Agentic RAG + HITL）
 
-在 RAG 之上加上会话表、最近 N 轮窗口、旧轮次摘要，以及拆开的 SSE 事件：`sources` / `token` / `done`。
+检索不再是 `/api/rag` 一条死流水线，而是 Agent 可选的 `search_knowledge` 工具。循环里还有 `get_order`、`create_refund`（写操作必须人工确认）。
 
 ## 准备
 
@@ -12,44 +12,42 @@ cd C:\Users\11356\mini-agent
 mvn spring-boot:run
 ```
 
-会话存在本地 H2 文件 `./data/mini-agent.mv.db`（已 gitignore）。控制台：http://localhost:8080/h2-console 。
+`max-iterations` 已改为 8。Key 只走环境变量。
 
-## 第 4 阶段验收
+## 验收（耳机退货）
 
-开会话：
+都走 `POST /api/chat`，看响应里的 `toolTraces` 和 `confirmation`。
 
-```powershell
-curl.exe -X POST http://localhost:8080/api/sessions
-```
-
-把返回的 `sessionId` 填进下面（示例用 `SID`）。
-
-追问能接上主题（先报销，再问「那怎么申请」）：
+退货政策（应出现 `search_knowledge`）：
 
 ```powershell
-curl.exe -X POST http://localhost:8080/api/rag -H "Content-Type: application/json" -d "{\"sessionId\":\"SID\",\"question\":\"报销咋整\"}"
-curl.exe -X POST http://localhost:8080/api/rag -H "Content-Type: application/json" -d "{\"sessionId\":\"SID\",\"question\":\"那怎么申请\"}"
+curl.exe -X POST http://localhost:8080/api/chat -H "Content-Type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"退货政策是什么\"}]}"
 ```
 
-第二条的 `rewrittenQuery` 应带上上一轮「报销」相关检索词；日志 `approxTokens=` 在多轮后应接近「摘要 + 最近 6 轮」，而不是按轮数直线上涨。
-
-RAG 流式（先 sources，再 token，最后 done）：
+订单 1001 能否退（应先 `get_order` 再检索政策）：
 
 ```powershell
-curl.exe -N -X POST http://localhost:8080/api/rag/stream -H "Content-Type: application/json" -d "{\"sessionId\":\"SID\",\"question\":\"一线城市住宿上限多少\"}"
+curl.exe -X POST http://localhost:8080/api/chat -H "Content-Type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"订单 1001 能退吗\"}]}"
 ```
 
-## 记忆怎么工作
+提交退货（应出现 `confirmation`，此时 `GET /api/refunds` 仍为空）：
 
+```powershell
+curl.exe -X POST http://localhost:8080/api/chat -H "Content-Type: application/json" -d "{\"messages\":[{\"role\":\"user\",\"content\":\"帮我给订单 1001 提交退货\"}]}"
+curl.exe http://localhost:8080/api/refunds
+curl.exe -X POST http://localhost:8080/api/confirm -H "Content-Type: application/json" -d "{\"confirmationId\":\"上面返回的id\",\"approved\":true}"
+curl.exe http://localhost:8080/api/refunds
 ```
-全量消息进 H2
-     → 送给模型的只有：摘要 system + 最近 6 轮
-     → 超出窗口的旧消息 LLM 压成摘要，并标 compacted
-```
 
-## 结构
+确认前退货列表必须没有 1001；`approved:true` 之后才有退货单。
 
-- `POST /api/sessions`：创建会话
-- `POST /api/rag`、`/api/rag/stream`：RAG；可选 `sessionId`
-- `POST /api/chat`、`/api/chat/stream`：工具对话；可选 `sessionId`
-- `session.max-recent-turns`：默认 6
+## 工具
+
+| 工具 | 作用 |
+| --- | --- |
+| search_knowledge | 第 3 阶段向量检索，返回 chunks |
+| get_order | 读模拟订单。1001 上周耳机可退，1002 超窗不可退 |
+| create_refund | 只登记待确认，不写库 |
+| get_weather | 第 2 阶段天气 |
+
+固定 `/api/rag` 仍保留，适合对照「Workflow vs Agent」。

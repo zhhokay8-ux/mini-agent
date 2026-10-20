@@ -55,6 +55,7 @@ public class SessionMemoryService {
         messages.save(new SessionMessageEntity(sessionId, role, nullToEmpty(content), Instant.now()));
         session.setUpdatedAt(Instant.now());
         sessions.save(session);
+        //压缩会话-把窗口外的旧消息压进摘要
         compactIfNeeded(session);
     }
 
@@ -133,6 +134,11 @@ public class SessionMemoryService {
         return previousUserQuestion + " " + rewritten;
     }
 
+    /**
+     * 最近 {@code maxRecentMessages} 条继续原样送给模型；窗口外且尚未压缩的旧消息交给 LLM 压成摘要。
+     * 已有摘要会一并送进去滚动更新。压完后把这些旧消息标成 compacted，避免下一轮重复压缩。
+     * 消息还没超出窗口时直接返回。
+     */
     private void compactIfNeeded(ChatSessionEntity session) {
         List<SessionMessageEntity> all = messages.findBySessionIdOrderByIdAsc(session.getId());
         List<SessionMessageEntity> stale = SessionWindow.staleUncompacted(all, properties.maxRecentMessages());

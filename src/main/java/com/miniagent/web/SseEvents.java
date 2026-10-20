@@ -25,6 +25,11 @@ public class SseEvents {
         return ServerSentEvent.<String>builder().event("token").data(piece == null ? "" : piece).build();
     }
 
+    /** {@code event: confirm}，写工具停在 HITL，前端应弹出 preview。 */
+    public ServerSentEvent<String> confirm(Object body) {
+        return json("confirm", body);
+    }
+
     /** {@code event: done}，表示这一轮结束。 */
     public ServerSentEvent<String> done() {
         return json("done", java.util.Map.of("ok", true));
